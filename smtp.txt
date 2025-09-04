@@ -1,0 +1,3 @@
+mail.geusnet.com|587|estepse@geusnet.com|qaese2289
+mail.otelco.net|587|wayne@otelco.net|Lily091302?
+mail.sti.net|587|tuckadvisor@sti.net|Hardykodi2/
