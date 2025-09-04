@@ -1,0 +1,2 @@
+smtp.example.com|587|user@example.com|password123
+mail.anotherdomain.net|465|contact@anotherdomain.net|securepass
