@@ -11,6 +11,7 @@ import concurrent.futures
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from colorama import Fore, Style, init
+from tqdm import tqdm
 
 # Initialize Colorama
 init(autoreset=True)
@@ -126,27 +127,24 @@ def check_smtp(smtp_line: str):
             msg.attach(MIMEText(body, "html"))
             server.sendmail(usr, toaddr, msg.as_string())
 
-        print(G + f"[+] VALID SMTP → {smtp_line}" + O)
         logging.info(f"VALID SMTP: {smtp_line}")
         good.append(smtp_line)
-        VALIDS += 1
         with open("Result/valid.txt", "a") as f:
             f.write(smtp_line + "\n")
+        return True
 
     except (smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as e:
-        print(R + f"[-] INVALID SMTP → {smtp_line} ({type(e).__name__})" + O)
         logging.error(f"INVALID SMTP: {smtp_line} | ERROR: {type(e).__name__} - {str(e)}")
         bad.append(smtp_line)
-        INVALIDS += 1
         with open("Result/invalid.txt", "a") as f:
             f.write(smtp_line + "\n")
+        return False
     except Exception as e:
-        print(R + f"[-] INVALID SMTP → {smtp_line} ({str(e)})" + O)
         logging.error(f"INVALID SMTP: {smtp_line} | ERROR: {str(e)}")
         bad.append(smtp_line)
-        INVALIDS += 1
         with open("Result/invalid.txt", "a") as f:
             f.write(smtp_line + "\n")
+        return False
 
 
 def main():
@@ -164,7 +162,9 @@ def main():
             smtps = f.read().splitlines()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
-            executor.map(check_smtp, smtps)
+            results = list(tqdm(executor.map(check_smtp, smtps), total=len(smtps), desc=f"{Y}Checking SMTPs{O}", ncols=100))
+            VALIDS = sum(1 for r in results if r)
+            INVALIDS = len(results) - VALIDS
 
         print(f"\n{G}[+] DONE! VALIDS: {VALIDS}, INVALIDS: {INVALIDS}{O}")
         logging.info(f"CHECK COMPLETE - VALIDS: {VALIDS}, INVALIDS: {INVALIDS}")
