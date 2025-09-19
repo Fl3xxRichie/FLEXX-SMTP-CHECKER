@@ -103,9 +103,15 @@ def check_smtp(smtp_line: str):
         host, port, usr, pwd = smtp_line.strip().split('|')
         port = int(port)
 
-        with smtplib.SMTP(host, port, timeout=10) as server:
+        server = None
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
             server.ehlo()
             server.starttls()
+
+        with server:
             server.login(usr, pwd)
 
             # Build test email
