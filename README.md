@@ -18,7 +18,8 @@
 
 ## Prerequisites
 
-- Python 3.x
+- Python 3.6 or higher
+- Internet connection (for DNS routing)
 
 ## Installation
 
@@ -28,6 +29,12 @@
     ```bash
     pip install -r requirement.txt
     ```
+
+## Dependencies
+
+- **colorama**: For colored terminal output
+- **tqdm**: For progress bars
+- **dnspython**: For DNS routing to bypass ISP blocking
 
 ## How to Use
 
