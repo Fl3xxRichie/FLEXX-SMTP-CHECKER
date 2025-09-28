@@ -2,6 +2,9 @@
 
 **FLEXX-SMTP-CHECKER** is an advanced and robust tool for validating SMTP credentials with intelligent DNS routing to bypass ISP blocking. It features concurrent processing, enhanced logging, graceful shutdown handling, and multiple connection strategies.
 
+
+![alt text](image.png)
+
 ## Features
 
 - **🚀 Bulk SMTP Checking**: Validate thousands of SMTP credentials from a file with high performance.
