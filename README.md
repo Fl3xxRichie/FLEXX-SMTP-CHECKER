@@ -1,14 +1,20 @@
 # FLEXX-SMTP-CHECKER
 
-**FLEXX-SMTP-CHECKER** is a powerful and efficient tool for validating a large list of SMTP credentials. It concurrently checks each SMTP server's connectivity and authentication, helping you quickly identify which servers are active and accessible.
+**FLEXX-SMTP-CHECKER** is an advanced and robust tool for validating SMTP credentials with intelligent DNS routing to bypass ISP blocking. It features concurrent processing, enhanced logging, graceful shutdown handling, and multiple connection strategies.
 
 ## Features
 
-- **Bulk SMTP Checking**: Validate a large number of SMTP credentials from a file.
-- **Concurrent Processing**: Utilizes multithreading to check multiple SMTP servers simultaneously, significantly speeding up the process.
-- **Configuration File**: Easily configure the recipient email address and the default number of threads using a `config.json` file.
-- **Detailed Logging**: Saves detailed logs of valid and invalid SMTP credentials in the `Result` directory.
-- **Cross-Platform**: Works on both Windows and Linux.
+- **🚀 Bulk SMTP Checking**: Validate thousands of SMTP credentials from a file with high performance.
+- **🔄 Concurrent Processing**: Utilizes multithreading to check multiple SMTP servers simultaneously.
+- **🌐 DNS Routing**: Automatically routes through multiple public DNS servers (Google, Cloudflare, Quad9, OpenDNS) to bypass ISP blocking.
+- **⚡ Smart Connection**: Extended timeouts, retry logic, and intelligent error handling for maximum success rate.
+- **📝 Enhanced Logging**: Comprehensive logging with both file and console output, detailed error categorization.
+- **🛑 Graceful Shutdown**: Clean shutdown handling with Ctrl+C support and partial result saving.
+- **⚙️ Configuration File**: Easy configuration via `config.json` for recipient email and thread settings.
+- **🎨 Colored Output**: Beautiful console output with color-coded status messages.
+- **🔧 Default File Support**: Uses `smtp.txt` by default - no need to specify file path.
+- **📊 Detailed Results**: Separate files for valid/invalid credentials with comprehensive logging.
+- **🛡️ Cross-Platform**: Works seamlessly on Windows, Linux, and macOS.
 
 ## Prerequisites
 
